@@ -1,0 +1,33 @@
+# Build artifacts
+target/
+debug/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Environment files (secrets - don't include in image)
+.env
+.env.local
+.env.*.local
+
+# Documentation
+README.md
+LICENSE
+docs/
+
+# CI/CD
+.github/
+
+# Misc
+*.log
+*.tmp
+.DS_Store
+Thumbs.db

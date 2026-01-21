@@ -1,0 +1,41 @@
+name: Deploy to Koyeb
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Allow manual trigger
+
+env:
+  APP_NAME: qlock-api
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Koyeb CLI
+        uses: koyeb-community/koyeb-actions@v2
+        with:
+          api_token: ${{ secrets.KOYEB_TOKEN }}
+
+      - name: Deploy to Koyeb
+        uses: koyeb/action-git-deploy@v1
+        with:
+          app-name: ${{ env.APP_NAME }}
+          service-name: ${{ env.APP_NAME }}
+          service-type: web
+          git-builder: docker
+          git-docker-dockerfile: Dockerfile
+          service-ports: "3001:http"
+          service-routes: "/:3001"
+          service-checks: "3001:http:/"
+          service-regions: "fra"
+          skip-cache: false
+          git-branch: main
+        env:
+          KOYEB_TOKEN: ${{ secrets.KOYEB_TOKEN }}
