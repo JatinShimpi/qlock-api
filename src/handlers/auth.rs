@@ -216,9 +216,9 @@ pub async fn google_callback(
         .ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
     let token = state.jwt.create_token(&user_id, &user.email)?;
 
-    // Redirect with token in URL to /app
+    // Redirect with token in URL
     Ok(Redirect::to(&format!(
-        "{}/app?token={}",
+        "{}?token={}",
         state.config.frontend_url, token
     )))
 }
@@ -320,9 +320,9 @@ pub async fn github_callback(
         .ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
     let token = state.jwt.create_token(&user_id, &user.email)?;
 
-    // Redirect with token in URL to /app
+    // Redirect with token in URL
     Ok(Redirect::to(&format!(
-        "{}/app?token={}",
+        "{}?token={}",
         state.config.frontend_url, token
     )))
 }
