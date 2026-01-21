@@ -15,7 +15,9 @@ pub struct User {
     pub provider_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password_hash: Option<String>,
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub updated_at: DateTime<Utc>,
 }
 
