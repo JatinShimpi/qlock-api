@@ -11,11 +11,9 @@ use mongodb::Collection;
 use serde::Deserialize;
 
 use crate::{
-    AppState,
     error::ApiError,
-    models::{
-        user::{AuthProvider, LoginRequest, RegisterRequest, User, UserResponse},
-    },
+    models::user::{AuthProvider, LoginRequest, RegisterRequest, User, UserResponse},
+    AppState,
 };
 
 // Get current user
@@ -49,7 +47,11 @@ pub async fn register(
     let collection: Collection<User> = state.db.collection("users");
 
     // Check if user exists
-    if collection.find_one(doc! { "email": &req.email }, None).await?.is_some() {
+    if collection
+        .find_one(doc! { "email": &req.email }, None)
+        .await?
+        .is_some()
+    {
         return Err(ApiError::BadRequest("Email already registered".to_string()));
     }
 
@@ -77,13 +79,17 @@ pub async fn register(
         .path("/")
         .http_only(true)
         .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .secure(true)
         .max_age(time::Duration::days(7))
         .build();
 
     let mut response_user = user;
     response_user.id = Some(user_id);
 
-    Ok((CookieJar::new().add(cookie), Json(UserResponse::from(response_user))))
+    Ok((
+        CookieJar::new().add(cookie),
+        Json(UserResponse::from(response_user)),
+    ))
 }
 
 // Email login
@@ -98,17 +104,22 @@ pub async fn login(
         .await?
         .ok_or_else(|| ApiError::Unauthorized("Invalid credentials".to_string()))?;
 
-    let password_hash = user.password_hash.as_ref()
+    let password_hash = user
+        .password_hash
+        .as_ref()
         .ok_or_else(|| ApiError::Unauthorized("Invalid credentials".to_string()))?;
 
     if !bcrypt::verify(&req.password, password_hash)
-        .map_err(|_| ApiError::Unauthorized("Invalid credentials".to_string()))? {
+        .map_err(|_| ApiError::Unauthorized("Invalid credentials".to_string()))?
+    {
         return Err(ApiError::Unauthorized("Invalid credentials".to_string()));
     }
 
-    let user_id = user.id.ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
+    let user_id = user
+        .id
+        .ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
     let token = state.jwt.create_token(&user_id, &user.email)?;
-    
+
     let cookie = Cookie::build(("auth_token", token))
         .path("/")
         .http_only(true)
@@ -168,7 +179,9 @@ pub async fn google_callback(
         .await
         .map_err(|e| ApiError::InternalError(format!("Token exchange failed: {}", e)))?;
 
-    let token_data: serde_json::Value = token_res.json().await
+    let token_data: serde_json::Value = token_res
+        .json()
+        .await
         .map_err(|e| ApiError::InternalError(format!("Token parse failed: {}", e)))?;
 
     let access_token = token_data["access_token"]
@@ -183,7 +196,9 @@ pub async fn google_callback(
         .await
         .map_err(|e| ApiError::InternalError(format!("User info failed: {}", e)))?;
 
-    let user_data: serde_json::Value = user_res.json().await
+    let user_data: serde_json::Value = user_res
+        .json()
+        .await
         .map_err(|e| ApiError::InternalError(format!("User parse failed: {}", e)))?;
 
     let email = user_data["email"].as_str().unwrap_or_default().to_string();
@@ -191,9 +206,19 @@ pub async fn google_callback(
     let avatar_url = user_data["picture"].as_str().map(|s| s.to_string());
     let provider_id = user_data["id"].as_str().unwrap_or_default().to_string();
 
-    let user = upsert_oauth_user(&state, email, name, avatar_url, AuthProvider::Google, provider_id).await?;
+    let user = upsert_oauth_user(
+        &state,
+        email,
+        name,
+        avatar_url,
+        AuthProvider::Google,
+        provider_id,
+    )
+    .await?;
 
-    let user_id = user.id.ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
+    let user_id = user
+        .id
+        .ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
     let token = state.jwt.create_token(&user_id, &user.email)?;
 
     let cookie = Cookie::build(("auth_token", token))
@@ -203,7 +228,10 @@ pub async fn google_callback(
         .max_age(time::Duration::days(7))
         .build();
 
-    Ok((CookieJar::new().add(cookie), Redirect::to(&format!("{}?auth=success", state.config.frontend_url))))
+    Ok((
+        CookieJar::new().add(cookie),
+        Redirect::to(&format!("{}?auth=success", state.config.frontend_url)),
+    ))
 }
 
 // GitHub OAuth - redirect to consent
@@ -222,7 +250,7 @@ pub async fn github_callback(
     Query(params): Query<OAuthCallback>,
 ) -> Result<(CookieJar, Redirect), ApiError> {
     let client = reqwest::Client::new();
-    
+
     // Exchange code for token
     let token_res = client
         .post("https://github.com/login/oauth/access_token")
@@ -236,7 +264,9 @@ pub async fn github_callback(
         .await
         .map_err(|e| ApiError::InternalError(format!("Token exchange failed: {}", e)))?;
 
-    let token_data: serde_json::Value = token_res.json().await
+    let token_data: serde_json::Value = token_res
+        .json()
+        .await
         .map_err(|e| ApiError::InternalError(format!("Token parse failed: {}", e)))?;
 
     let access_token = token_data["access_token"]
@@ -252,7 +282,9 @@ pub async fn github_callback(
         .await
         .map_err(|e| ApiError::InternalError(format!("User info failed: {}", e)))?;
 
-    let user_data: serde_json::Value = user_res.json().await
+    let user_data: serde_json::Value = user_res
+        .json()
+        .await
         .map_err(|e| ApiError::InternalError(format!("User parse failed: {}", e)))?;
 
     // Get email separately (might be private)
@@ -266,7 +298,8 @@ pub async fn github_callback(
 
     let email = if let Some(res) = email_res {
         let emails: Vec<serde_json::Value> = res.json().await.unwrap_or_default();
-        emails.iter()
+        emails
+            .iter()
             .find(|e| e["primary"].as_bool().unwrap_or(false))
             .and_then(|e| e["email"].as_str())
             .unwrap_or_else(|| user_data["email"].as_str().unwrap_or_default())
@@ -275,16 +308,27 @@ pub async fn github_callback(
         user_data["email"].as_str().unwrap_or_default().to_string()
     };
 
-    let name = user_data["name"].as_str()
+    let name = user_data["name"]
+        .as_str()
         .or(user_data["login"].as_str())
         .unwrap_or_default()
         .to_string();
     let avatar_url = user_data["avatar_url"].as_str().map(|s| s.to_string());
     let provider_id = user_data["id"].to_string();
 
-    let user = upsert_oauth_user(&state, email, name, avatar_url, AuthProvider::Github, provider_id).await?;
+    let user = upsert_oauth_user(
+        &state,
+        email,
+        name,
+        avatar_url,
+        AuthProvider::Github,
+        provider_id,
+    )
+    .await?;
 
-    let user_id = user.id.ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
+    let user_id = user
+        .id
+        .ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
     let token = state.jwt.create_token(&user_id, &user.email)?;
 
     let cookie = Cookie::build(("auth_token", token))
@@ -294,7 +338,10 @@ pub async fn github_callback(
         .max_age(time::Duration::days(7))
         .build();
 
-    Ok((CookieJar::new().add(cookie), Redirect::to(&format!("{}?auth=success", state.config.frontend_url))))
+    Ok((
+        CookieJar::new().add(cookie),
+        Redirect::to(&format!("{}?auth=success", state.config.frontend_url)),
+    ))
 }
 
 // Helper: Upsert OAuth user
@@ -312,11 +359,13 @@ async fn upsert_oauth_user(
     // Try to find existing user
     if let Some(mut user) = collection.find_one(doc! { "email": &email }, None).await? {
         // Update avatar and name
-        collection.update_one(
-            doc! { "_id": user.id },
-            doc! { "$set": { "avatar_url": &avatar_url, "name": &name, "updated_at": now } },
-            None
-        ).await?;
+        collection
+            .update_one(
+                doc! { "_id": user.id },
+                doc! { "$set": { "avatar_url": &avatar_url, "name": &name, "updated_at": now } },
+                None,
+            )
+            .await?;
         user.avatar_url = avatar_url;
         user.name = name;
         return Ok(user);
