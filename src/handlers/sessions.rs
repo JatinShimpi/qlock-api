@@ -1,8 +1,8 @@
 use axum::{
     extract::{Path, State},
+    http::HeaderMap,
     Json,
 };
-use axum_extra::extract::cookie::CookieJar;
 use bson::{doc, oid::ObjectId};
 use futures::StreamExt;
 use mongodb::Collection;
@@ -13,11 +13,18 @@ use crate::{
     models::session::{Attempt, ClientSession, Session, SessionResponse, SyncRequest},
 };
 
+// Helper to extract token from Authorization header
+fn extract_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
+}
+
 // Helper to get user ID from token
-fn get_user_id(jar: &CookieJar, state: &AppState) -> Result<ObjectId, ApiError> {
-    let token = jar
-        .get("auth_token")
-        .map(|c| c.value().to_string())
+fn get_user_id(headers: &HeaderMap, state: &AppState) -> Result<ObjectId, ApiError> {
+    let token = extract_token(headers)
         .ok_or_else(|| ApiError::Unauthorized("Not authenticated".to_string()))?;
 
     let claims = state.jwt.verify_token(&token)?;
@@ -28,9 +35,9 @@ fn get_user_id(jar: &CookieJar, state: &AppState) -> Result<ObjectId, ApiError> 
 // List all sessions for user
 pub async fn list_sessions(
     State(state): State<AppState>,
-    jar: CookieJar,
+    headers: HeaderMap,
 ) -> Result<Json<Vec<SessionResponse>>, ApiError> {
-    let user_id = get_user_id(&jar, &state)?;
+    let user_id = get_user_id(&headers, &state)?;
     let collection: Collection<Session> = state.db.collection("sessions");
 
     let mut cursor = collection.find(doc! { "user_id": user_id }, None).await?;
@@ -55,10 +62,10 @@ fn parse_date(s: &str) -> bson::DateTime {
 // Sync local sessions to cloud (one-time migration)
 pub async fn sync_sessions(
     State(state): State<AppState>,
-    jar: CookieJar,
+    headers: HeaderMap,
     Json(req): Json<SyncRequest>,
 ) -> Result<Json<Vec<SessionResponse>>, ApiError> {
-    let user_id = get_user_id(&jar, &state)?;
+    let user_id = get_user_id(&headers, &state)?;
     let collection: Collection<Session> = state.db.collection("sessions");
     let now = bson::DateTime::now();
 
@@ -103,17 +110,27 @@ pub async fn sync_sessions(
         collection.insert_one(&session, None).await?;
     }
 
-    // Return all sessions
-    list_sessions(State(state), jar).await
+    // Return all sessions - need to call with headers
+    let collection: Collection<Session> = state.db.collection("sessions");
+    let mut cursor = collection.find(doc! { "user_id": user_id }, None).await?;
+    let mut sessions = Vec::new();
+
+    while let Some(result) = cursor.next().await {
+        if let Ok(session) = result {
+            sessions.push(SessionResponse::from(session));
+        }
+    }
+
+    Ok(Json(sessions))
 }
 
 // Create a new session
 pub async fn create_session(
     State(state): State<AppState>,
-    jar: CookieJar,
+    headers: HeaderMap,
     Json(client_session): Json<ClientSession>,
 ) -> Result<Json<SessionResponse>, ApiError> {
-    let user_id = get_user_id(&jar, &state)?;
+    let user_id = get_user_id(&headers, &state)?;
     let collection: Collection<Session> = state.db.collection("sessions");
     let now = bson::DateTime::now();
 
@@ -152,11 +169,11 @@ pub async fn create_session(
 // Update a session
 pub async fn update_session(
     State(state): State<AppState>,
-    jar: CookieJar,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(client_session): Json<ClientSession>,
 ) -> Result<Json<SessionResponse>, ApiError> {
-    let user_id = get_user_id(&jar, &state)?;
+    let user_id = get_user_id(&headers, &state)?;
     let session_id = ObjectId::parse_str(&id)
         .map_err(|_| ApiError::BadRequest("Invalid session ID".to_string()))?;
 
@@ -215,10 +232,10 @@ pub async fn update_session(
 // Delete a session
 pub async fn delete_session(
     State(state): State<AppState>,
-    jar: CookieJar,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<(), ApiError> {
-    let user_id = get_user_id(&jar, &state)?;
+    let user_id = get_user_id(&headers, &state)?;
     let session_id = ObjectId::parse_str(&id)
         .map_err(|_| ApiError::BadRequest("Invalid session ID".to_string()))?;
 

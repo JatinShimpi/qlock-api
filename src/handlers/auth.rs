@@ -1,14 +1,12 @@
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
+    http::{StatusCode, HeaderMap},
     response::{IntoResponse, Redirect},
     Json,
 };
-use axum_extra::extract::cookie::{Cookie, CookieJar};
 use bson::{doc, oid::ObjectId};
-
 use mongodb::Collection;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     error::ApiError,
@@ -16,14 +14,28 @@ use crate::{
     AppState,
 };
 
+// Auth response with token
+#[derive(Serialize)]
+pub struct AuthResponse {
+    pub user: UserResponse,
+    pub token: String,
+}
+
+// Helper to extract token from Authorization header
+fn extract_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
+}
+
 // Get current user
 pub async fn me(
     State(state): State<AppState>,
-    jar: CookieJar,
+    headers: HeaderMap,
 ) -> Result<Json<UserResponse>, ApiError> {
-    let token = jar
-        .get("auth_token")
-        .map(|c| c.value().to_string())
+    let token = extract_token(&headers)
         .ok_or_else(|| ApiError::Unauthorized("Not authenticated".to_string()))?;
 
     let claims = state.jwt.verify_token(&token)?;
@@ -43,7 +55,7 @@ pub async fn me(
 pub async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
-) -> Result<(CookieJar, Json<UserResponse>), ApiError> {
+) -> Result<Json<AuthResponse>, ApiError> {
     let collection: Collection<User> = state.db.collection("users");
 
     // Check if user exists
@@ -75,28 +87,21 @@ pub async fn register(
     let user_id = result.inserted_id.as_object_id().unwrap();
 
     let token = state.jwt.create_token(&user_id, &req.email)?;
-    let cookie = Cookie::build(("auth_token", token))
-        .path("/")
-        .http_only(true)
-        .same_site(axum_extra::extract::cookie::SameSite::None)
-        .secure(true)
-        .max_age(time::Duration::days(7))
-        .build();
 
     let mut response_user = user;
     response_user.id = Some(user_id);
 
-    Ok((
-        CookieJar::new().add(cookie),
-        Json(UserResponse::from(response_user)),
-    ))
+    Ok(Json(AuthResponse {
+        user: UserResponse::from(response_user),
+        token,
+    }))
 }
 
 // Email login
 pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
-) -> Result<(CookieJar, Json<UserResponse>), ApiError> {
+) -> Result<Json<AuthResponse>, ApiError> {
     let collection: Collection<User> = state.db.collection("users");
 
     let user = collection
@@ -120,25 +125,15 @@ pub async fn login(
         .ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
     let token = state.jwt.create_token(&user_id, &user.email)?;
 
-    let cookie = Cookie::build(("auth_token", token))
-        .path("/")
-        .http_only(true)
-        .same_site(axum_extra::extract::cookie::SameSite::Lax)
-        .max_age(time::Duration::days(7))
-        .build();
-
-    Ok((CookieJar::new().add(cookie), Json(UserResponse::from(user))))
+    Ok(Json(AuthResponse {
+        user: UserResponse::from(user),
+        token,
+    }))
 }
 
 // Logout
 pub async fn logout() -> impl IntoResponse {
-    let cookie = Cookie::build(("auth_token", ""))
-        .path("/")
-        .http_only(true)
-        .max_age(time::Duration::seconds(0))
-        .build();
-
-    (CookieJar::new().add(cookie), StatusCode::OK)
+    StatusCode::OK
 }
 
 // OAuth callback params
@@ -159,11 +154,11 @@ pub async fn google_auth(State(state): State<AppState>) -> Redirect {
     Redirect::to(&url)
 }
 
-// Google OAuth callback
+// Google OAuth callback - returns token in URL
 pub async fn google_callback(
     State(state): State<AppState>,
     Query(params): Query<OAuthCallback>,
-) -> Result<(CookieJar, Redirect), ApiError> {
+) -> Result<Redirect, ApiError> {
     // Exchange code for token
     let client = reqwest::Client::new();
     let token_res = client
@@ -221,17 +216,11 @@ pub async fn google_callback(
         .ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
     let token = state.jwt.create_token(&user_id, &user.email)?;
 
-    let cookie = Cookie::build(("auth_token", token))
-        .path("/")
-        .http_only(true)
-        .same_site(axum_extra::extract::cookie::SameSite::Lax)
-        .max_age(time::Duration::days(7))
-        .build();
-
-    Ok((
-        CookieJar::new().add(cookie),
-        Redirect::to(&format!("{}?auth=success", state.config.frontend_url)),
-    ))
+    // Redirect with token in URL
+    Ok(Redirect::to(&format!(
+        "{}?token={}",
+        state.config.frontend_url, token
+    )))
 }
 
 // GitHub OAuth - redirect to consent
@@ -244,11 +233,11 @@ pub async fn github_auth(State(state): State<AppState>) -> Redirect {
     Redirect::to(&url)
 }
 
-// GitHub OAuth callback
+// GitHub OAuth callback - returns token in URL
 pub async fn github_callback(
     State(state): State<AppState>,
     Query(params): Query<OAuthCallback>,
-) -> Result<(CookieJar, Redirect), ApiError> {
+) -> Result<Redirect, ApiError> {
     let client = reqwest::Client::new();
 
     // Exchange code for token
@@ -331,17 +320,11 @@ pub async fn github_callback(
         .ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
     let token = state.jwt.create_token(&user_id, &user.email)?;
 
-    let cookie = Cookie::build(("auth_token", token))
-        .path("/")
-        .http_only(true)
-        .same_site(axum_extra::extract::cookie::SameSite::Lax)
-        .max_age(time::Duration::days(7))
-        .build();
-
-    Ok((
-        CookieJar::new().add(cookie),
-        Redirect::to(&format!("{}?auth=success", state.config.frontend_url)),
-    ))
+    // Redirect with token in URL
+    Ok(Redirect::to(&format!(
+        "{}?token={}",
+        state.config.frontend_url, token
+    )))
 }
 
 // Helper: Upsert OAuth user

@@ -54,10 +54,15 @@ async fn main() {
         jwt,
     };
 
-    // CORS configuration
+    // CORS configuration - allow frontend origin from config
+    let frontend_origin: axum::http::HeaderValue = config.frontend_url
+        .parse()
+        .expect("FRONTEND_URL must be a valid origin");
+    
     let cors = CorsLayer::new()
         .allow_origin([
             "http://localhost:5173".parse().unwrap(),
+            frontend_origin,
         ])
         .allow_methods([
             axum::http::Method::GET,
