@@ -78,7 +78,7 @@ pub async fn register(
     let cookie = Cookie::build(("auth_token", token))
         .path("/")
         .http_only(true)
-        .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .same_site(axum_extra::extract::cookie::SameSite::None)
         .secure(true)
         .max_age(time::Duration::days(7))
         .build();
