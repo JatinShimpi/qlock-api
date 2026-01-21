@@ -4,14 +4,13 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use bson::{doc, oid::ObjectId};
-use chrono::Utc;
 use futures::StreamExt;
 use mongodb::Collection;
 
 use crate::{
     AppState,
     error::ApiError,
-    models::session::{ClientSession, Session, SessionResponse, SyncRequest},
+    models::session::{Attempt, ClientSession, Session, SessionResponse, SyncRequest},
 };
 
 // Helper to get user ID from token
@@ -46,6 +45,13 @@ pub async fn list_sessions(
     Ok(Json(sessions))
 }
 
+// Parse ISO date string to bson::DateTime
+fn parse_date(s: &str) -> bson::DateTime {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|d| bson::DateTime::from_chrono(d.with_timezone(&chrono::Utc)))
+        .unwrap_or_else(|_| bson::DateTime::now())
+}
+
 // Sync local sessions to cloud (one-time migration)
 pub async fn sync_sessions(
     State(state): State<AppState>,
@@ -54,7 +60,7 @@ pub async fn sync_sessions(
 ) -> Result<Json<Vec<SessionResponse>>, ApiError> {
     let user_id = get_user_id(&jar, &state)?;
     let collection: Collection<Session> = state.db.collection("sessions");
-    let now = Utc::now();
+    let now = bson::DateTime::now();
 
     for client_session in req.sessions {
         // Check if already synced (by client_id)
@@ -66,6 +72,15 @@ pub async fn sync_sessions(
             continue; // Skip already synced
         }
 
+        // Convert client attempts to server attempts
+        let attempts: Vec<Attempt> = client_session.attempts.iter().map(|a| {
+            Attempt {
+                id: a.id.clone(),
+                date: parse_date(&a.date),
+                results: a.results.clone(),
+            }
+        }).collect();
+
         let session = Session {
             id: None,
             user_id,
@@ -76,10 +91,10 @@ pub async fn sync_sessions(
             time_per_question: client_session.time_per_question,
             total_time: client_session.total_time,
             questions: client_session.questions,
-            attempts: client_session.attempts,
+            attempts,
             created_at: client_session.created_at
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
-                .map(|d| d.with_timezone(&Utc))
+                .as_ref()
+                .map(|s| parse_date(s))
                 .unwrap_or(now),
             updated_at: now,
             synced_at: Some(now),
@@ -100,7 +115,16 @@ pub async fn create_session(
 ) -> Result<Json<SessionResponse>, ApiError> {
     let user_id = get_user_id(&jar, &state)?;
     let collection: Collection<Session> = state.db.collection("sessions");
-    let now = Utc::now();
+    let now = bson::DateTime::now();
+
+    // Convert client attempts to server attempts
+    let attempts: Vec<Attempt> = client_session.attempts.iter().map(|a| {
+        Attempt {
+            id: a.id.clone(),
+            date: parse_date(&a.date),
+            results: a.results.clone(),
+        }
+    }).collect();
 
     let session = Session {
         id: None,
@@ -112,7 +136,7 @@ pub async fn create_session(
         time_per_question: client_session.time_per_question,
         total_time: client_session.total_time,
         questions: client_session.questions,
-        attempts: client_session.attempts,
+        attempts,
         created_at: now,
         updated_at: now,
         synced_at: Some(now),
@@ -137,13 +161,22 @@ pub async fn update_session(
         .map_err(|_| ApiError::BadRequest("Invalid session ID".to_string()))?;
 
     let collection: Collection<Session> = state.db.collection("sessions");
-    let now = Utc::now();
+    let now = bson::DateTime::now();
 
     // Verify ownership
     let existing = collection
         .find_one(doc! { "_id": session_id, "user_id": user_id }, None)
         .await?
         .ok_or_else(|| ApiError::NotFound("Session not found".to_string()))?;
+
+    // Convert client attempts to server attempts
+    let attempts: Vec<Attempt> = client_session.attempts.iter().map(|a| {
+        Attempt {
+            id: a.id.clone(),
+            date: parse_date(&a.date),
+            results: a.results.clone(),
+        }
+    }).collect();
 
     collection.update_one(
         doc! { "_id": session_id },
@@ -154,7 +187,7 @@ pub async fn update_session(
             "time_per_question": client_session.time_per_question,
             "total_time": client_session.total_time,
             "questions": bson::to_bson(&client_session.questions).unwrap(),
-            "attempts": bson::to_bson(&client_session.attempts).unwrap(),
+            "attempts": bson::to_bson(&attempts).unwrap(),
             "updated_at": now,
         }},
         None
@@ -170,7 +203,7 @@ pub async fn update_session(
         time_per_question: client_session.time_per_question,
         total_time: client_session.total_time,
         questions: client_session.questions,
-        attempts: client_session.attempts,
+        attempts,
         created_at: existing.created_at,
         updated_at: now,
         synced_at: Some(now),

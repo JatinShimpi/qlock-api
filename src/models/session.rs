@@ -1,5 +1,4 @@
 use bson::oid::ObjectId;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,10 +16,10 @@ pub struct Session {
     pub total_time: Option<i32>,
     pub questions: Vec<Question>,
     pub attempts: Vec<Attempt>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: bson::DateTime,
+    pub updated_at: bson::DateTime,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub synced_at: Option<DateTime<Utc>>,
+    pub synced_at: Option<bson::DateTime>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,7 +36,7 @@ pub struct Question {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attempt {
     pub id: String,
-    pub date: DateTime<Utc>,
+    pub date: bson::DateTime,
     pub results: Vec<AttemptResult>,
 }
 
@@ -65,8 +64,8 @@ pub struct SessionResponse {
     pub total_time: Option<i32>,
     pub questions: Vec<Question>,
     pub attempts: Vec<Attempt>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: bson::DateTime,
+    pub updated_at: bson::DateTime,
 }
 
 impl From<Session> for SessionResponse {
@@ -104,7 +103,14 @@ pub struct ClientSession {
     #[serde(rename = "totalTime")]
     pub total_time: Option<i32>,
     pub questions: Vec<Question>,
-    pub attempts: Vec<Attempt>,
+    pub attempts: Vec<ClientAttempt>,
     #[serde(rename = "createdAt")]
     pub created_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClientAttempt {
+    pub id: String,
+    pub date: String,  // ISO string from client
+    pub results: Vec<AttemptResult>,
 }
