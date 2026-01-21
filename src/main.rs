@@ -12,7 +12,6 @@ use axum::{
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use config::Config;
 use handlers::{auth, sessions};
@@ -54,16 +53,14 @@ async fn main() {
         jwt,
     };
 
-    // CORS configuration - allow frontend origin from config
-    let frontend_origin: axum::http::HeaderValue = config.frontend_url
-        .parse()
-        .expect("FRONTEND_URL must be a valid origin");
+    // CORS configuration - allow all configured origins
+    let origins: Vec<axum::http::HeaderValue> = config.allowed_origins
+        .iter()
+        .filter_map(|o| o.parse().ok())
+        .collect();
     
     let cors = CorsLayer::new()
-        .allow_origin([
-            "http://localhost:5173".parse().unwrap(),
-            frontend_origin,
-        ])
+        .allow_origin(origins)
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
