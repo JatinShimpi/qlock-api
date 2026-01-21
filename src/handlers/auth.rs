@@ -6,7 +6,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
 use bson::{doc, oid::ObjectId};
-use chrono::Utc;
+
 use mongodb::Collection;
 use serde::Deserialize;
 
@@ -58,7 +58,7 @@ pub async fn register(
     let password_hash = bcrypt::hash(&req.password, bcrypt::DEFAULT_COST)
         .map_err(|e| ApiError::InternalError(format!("Password hash error: {}", e)))?;
 
-    let now = Utc::now();
+    let now = bson::DateTime::now();
     let user = User {
         id: None,
         email: req.email.clone(),
@@ -354,7 +354,7 @@ async fn upsert_oauth_user(
     provider_id: String,
 ) -> Result<User, ApiError> {
     let collection: Collection<User> = state.db.collection("users");
-    let now = Utc::now();
+    let now = bson::DateTime::now();
 
     // Try to find existing user
     if let Some(mut user) = collection.find_one(doc! { "email": &email }, None).await? {

@@ -1,5 +1,4 @@
 use bson::oid::ObjectId;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,10 +14,8 @@ pub struct User {
     pub provider_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password_hash: Option<String>,
-    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
-    pub created_at: DateTime<Utc>,
-    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
-    pub updated_at: DateTime<Utc>,
+    pub created_at: bson::DateTime,
+    pub updated_at: bson::DateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
