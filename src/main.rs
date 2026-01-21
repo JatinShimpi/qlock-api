@@ -75,6 +75,9 @@ async fn main() {
 
     // Build router
     let app = Router::new()
+        // Health check for deployment platforms
+        .route("/", get(|| async { "OK" }))
+        .route("/health", get(|| async { "OK" }))
         // Auth routes
         .route("/api/auth/me", get(auth::me))
         .route("/api/auth/register", post(auth::register))
