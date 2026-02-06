@@ -87,6 +87,7 @@ async fn main() {
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/google", get(auth::google_auth))
         .route("/api/auth/google/callback", get(auth::google_callback))
+        .route("/api/auth/google/mobile", post(auth::google_mobile_auth))
         .route("/api/auth/github", get(auth::github_auth))
         .route("/api/auth/github/callback", get(auth::github_callback))
         // Session routes

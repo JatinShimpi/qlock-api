@@ -223,6 +223,75 @@ pub async fn google_callback(
     )))
 }
 
+// Mobile Google Auth Request
+#[derive(Debug, Deserialize)]
+pub struct MobileGoogleAuthRequest {
+    #[serde(rename = "idToken")]
+    id_token: String,
+}
+
+// Google Token Info Response
+#[derive(Debug, Deserialize)]
+struct GoogleTokenInfo {
+    email: Option<String>,
+    name: Option<String>,
+    picture: Option<String>,
+    sub: Option<String>,
+}
+
+// Mobile Google Auth - verify ID token from native apps
+pub async fn google_mobile_auth(
+    State(state): State<AppState>,
+    Json(req): Json<MobileGoogleAuthRequest>,
+) -> Result<Json<AuthResponse>, ApiError> {
+    // Verify the ID token with Google
+    let client = reqwest::Client::new();
+    let token_info_res = client
+        .get(&format!(
+            "https://oauth2.googleapis.com/tokeninfo?id_token={}",
+            req.id_token
+        ))
+        .send()
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Token verification failed: {}", e)))?;
+
+    if !token_info_res.status().is_success() {
+        return Err(ApiError::Unauthorized("Invalid Google ID token".to_string()));
+    }
+
+    let token_info: GoogleTokenInfo = token_info_res
+        .json()
+        .await
+        .map_err(|e| ApiError::InternalError(format!("Token parse failed: {}", e)))?;
+
+    let email = token_info
+        .email
+        .ok_or_else(|| ApiError::BadRequest("No email in token".to_string()))?;
+    let name = token_info.name.unwrap_or_else(|| email.clone());
+    let avatar_url = token_info.picture;
+    let provider_id = token_info.sub.unwrap_or_default();
+
+    let user = upsert_oauth_user(
+        &state,
+        email,
+        name,
+        avatar_url,
+        AuthProvider::Google,
+        provider_id,
+    )
+    .await?;
+
+    let user_id = user
+        .id
+        .ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
+    let token = state.jwt.create_token(&user_id, &user.email)?;
+
+    Ok(Json(AuthResponse {
+        user: UserResponse::from(user),
+        token,
+    }))
+}
+
 // GitHub OAuth - redirect to consent
 pub async fn github_auth(State(state): State<AppState>) -> Redirect {
     let url = format!(
