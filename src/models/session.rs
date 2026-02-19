@@ -59,17 +59,25 @@ pub struct AttemptResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SessionResponse {
+    #[serde(rename = "_id")]
     pub id: String,
+    #[serde(rename = "id")]
     pub client_id: String,
     pub topic: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub subtopic: Option<String>,
+    #[serde(rename = "timerMode")]
     pub timer_mode: String,
+    #[serde(rename = "timePerQuestion")]
     pub time_per_question: i32,
+    #[serde(rename = "totalTime", skip_serializing_if = "Option::is_none")]
     pub total_time: Option<i32>,
     pub questions: Vec<Question>,
     pub attempts: Vec<Attempt>,
-    pub created_at: bson::DateTime,
-    pub updated_at: bson::DateTime,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
 }
 
 impl From<Session> for SessionResponse {
@@ -84,8 +92,8 @@ impl From<Session> for SessionResponse {
             total_time: s.total_time,
             questions: s.questions,
             attempts: s.attempts,
-            created_at: s.created_at,
-            updated_at: s.updated_at,
+            created_at: s.created_at.try_to_rfc3339_string().unwrap_or_default(),
+            updated_at: s.updated_at.try_to_rfc3339_string().unwrap_or_default(),
         }
     }
 }
