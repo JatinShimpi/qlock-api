@@ -4,11 +4,15 @@ use axum::{
     response::{IntoResponse, Redirect},
     Json,
 };
+use axum_extra::extract::CookieJar;
+use axum_extra::extract::cookie::{Cookie, SameSite};
 use bson::{doc, oid::ObjectId};
 use mongodb::Collection;
 use serde::{Deserialize, Serialize};
+use time::Duration;
 
 use crate::{
+    config::Config,
     error::ApiError,
     models::user::{AuthProvider, LoginRequest, RegisterRequest, User, UserResponse},
     AppState,
@@ -21,8 +25,13 @@ pub struct AuthResponse {
     pub token: String,
 }
 
-// Helper to extract token from Authorization header
-fn extract_token(headers: &HeaderMap) -> Option<String> {
+// Helper to extract token from cookie (web) or Authorization header (mobile)
+pub fn extract_token(jar: &CookieJar, headers: &HeaderMap) -> Option<String> {
+    // 1. Check HTTP-only cookie (web clients)
+    if let Some(cookie) = jar.get("auth_token") {
+        return Some(cookie.value().to_string());
+    }
+    // 2. Fall back to Authorization header (mobile clients)
     headers
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
@@ -30,12 +39,35 @@ fn extract_token(headers: &HeaderMap) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+// Helper to build an HTTP-only auth cookie
+pub fn build_auth_cookie(token: &str, config: &Config) -> Cookie<'static> {
+    Cookie::build(("auth_token", token.to_string()))
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::None)
+        .path("/")
+        .max_age(Duration::hours(config.jwt_expiry_hours))
+        .build()
+}
+
+// Helper to build a cookie that clears the auth token
+pub fn clear_auth_cookie() -> Cookie<'static> {
+    Cookie::build(("auth_token", ""))
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::None)
+        .path("/")
+        .max_age(Duration::ZERO)
+        .build()
+}
+
 // Get current user
 pub async fn me(
     State(state): State<AppState>,
+    jar: CookieJar,
     headers: HeaderMap,
 ) -> Result<Json<UserResponse>, ApiError> {
-    let token = extract_token(&headers)
+    let token = extract_token(&jar, &headers)
         .ok_or_else(|| ApiError::Unauthorized("Not authenticated".to_string()))?;
 
     let claims = state.jwt.verify_token(&token)?;
@@ -55,7 +87,7 @@ pub async fn me(
 pub async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
-) -> Result<Json<AuthResponse>, ApiError> {
+) -> Result<(CookieJar, Json<AuthResponse>), ApiError> {
     let collection: Collection<User> = state.db.collection("users");
 
     // Check if user exists
@@ -87,21 +119,22 @@ pub async fn register(
     let user_id = result.inserted_id.as_object_id().unwrap();
 
     let token = state.jwt.create_token(&user_id, &req.email)?;
+    let jar = CookieJar::new().add(build_auth_cookie(&token, &state.config));
 
     let mut response_user = user;
     response_user.id = Some(user_id);
 
-    Ok(Json(AuthResponse {
+    Ok((jar, Json(AuthResponse {
         user: UserResponse::from(response_user),
         token,
-    }))
+    })))
 }
 
 // Email login
 pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
-) -> Result<Json<AuthResponse>, ApiError> {
+) -> Result<(CookieJar, Json<AuthResponse>), ApiError> {
     let collection: Collection<User> = state.db.collection("users");
 
     let user = collection
@@ -124,16 +157,18 @@ pub async fn login(
         .id
         .ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
     let token = state.jwt.create_token(&user_id, &user.email)?;
+    let jar = CookieJar::new().add(build_auth_cookie(&token, &state.config));
 
-    Ok(Json(AuthResponse {
+    Ok((jar, Json(AuthResponse {
         user: UserResponse::from(user),
         token,
-    }))
+    })))
 }
 
-// Logout
+// Logout — clears the HTTP-only auth cookie
 pub async fn logout() -> impl IntoResponse {
-    StatusCode::OK
+    let jar = CookieJar::new().add(clear_auth_cookie());
+    (jar, StatusCode::OK)
 }
 
 // OAuth callback params
@@ -154,11 +189,11 @@ pub async fn google_auth(State(state): State<AppState>) -> Redirect {
     Redirect::to(&url)
 }
 
-// Google OAuth callback - returns token in URL
+// Google OAuth callback - sets HTTP-only cookie and redirects
 pub async fn google_callback(
     State(state): State<AppState>,
     Query(params): Query<OAuthCallback>,
-) -> Result<Redirect, ApiError> {
+) -> Result<(CookieJar, Redirect), ApiError> {
     // Exchange code for token
     let client = reqwest::Client::new();
     let token_res = client
@@ -216,11 +251,9 @@ pub async fn google_callback(
         .ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
     let token = state.jwt.create_token(&user_id, &user.email)?;
 
-    // Redirect with token in URL
-    Ok(Redirect::to(&format!(
-        "{}?token={}",
-        state.config.frontend_url, token
-    )))
+    // Set HTTP-only cookie and redirect (no token in URL)
+    let jar = CookieJar::new().add(build_auth_cookie(&token, &state.config));
+    Ok((jar, Redirect::to(&state.config.frontend_url)))
 }
 
 // Mobile Google Auth Request
@@ -302,11 +335,11 @@ pub async fn github_auth(State(state): State<AppState>) -> Redirect {
     Redirect::to(&url)
 }
 
-// GitHub OAuth callback - returns token in URL
+// GitHub OAuth callback - sets HTTP-only cookie and redirects
 pub async fn github_callback(
     State(state): State<AppState>,
     Query(params): Query<OAuthCallback>,
-) -> Result<Redirect, ApiError> {
+) -> Result<(CookieJar, Redirect), ApiError> {
     let client = reqwest::Client::new();
 
     // Exchange code for token
@@ -389,11 +422,9 @@ pub async fn github_callback(
         .ok_or_else(|| ApiError::InternalError("User has no ID".to_string()))?;
     let token = state.jwt.create_token(&user_id, &user.email)?;
 
-    // Redirect with token in URL
-    Ok(Redirect::to(&format!(
-        "{}?token={}",
-        state.config.frontend_url, token
-    )))
+    // Set HTTP-only cookie and redirect (no token in URL)
+    let jar = CookieJar::new().add(build_auth_cookie(&token, &state.config));
+    Ok((jar, Redirect::to(&state.config.frontend_url)))
 }
 
 // Helper: Upsert OAuth user
