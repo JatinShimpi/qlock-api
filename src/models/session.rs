@@ -42,14 +42,18 @@ pub struct Attempt {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttemptResult {
+    #[serde(alias = "question_id", rename = "questionId")]
     pub question_id: String,
+    #[serde(default)]
     pub identifier: String,
     pub status: String,
+    #[serde(alias = "time_taken", rename = "timeTaken")]
     pub time_taken: i32,
+    #[serde(alias = "total_time", rename = "totalTime")]
     pub total_time: i32,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "user_answer", rename = "userAnswer", skip_serializing_if = "Option::is_none")]
     pub user_answer: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "question_type", rename = "questionType", skip_serializing_if = "Option::is_none")]
     pub question_type: Option<String>,
 }
 
