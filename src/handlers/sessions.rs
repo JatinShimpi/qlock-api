@@ -162,6 +162,50 @@ pub async fn create_session(
         }
     }).collect();
 
+    // Check if session with this client_id already exists
+    let existing = collection
+        .find_one(doc! { "user_id": user_id, "client_id": &client_session.id }, None)
+        .await?;
+
+    if let Some(mut existing_session) = existing {
+        // Update existing session
+        let mut changed = false;
+        
+        // Update fields that might have changed
+        if existing_session.topic != client_session.topic { existing_session.topic = client_session.topic; changed = true; }
+        if existing_session.subtopic != client_session.subtopic { existing_session.subtopic = client_session.subtopic; changed = true; }
+        if existing_session.timer_mode != client_session.timer_mode { existing_session.timer_mode = client_session.timer_mode; changed = true; }
+        if existing_session.time_per_question != client_session.time_per_question { existing_session.time_per_question = client_session.time_per_question; changed = true; }
+        if existing_session.total_time != client_session.total_time { existing_session.total_time = client_session.total_time; changed = true; }
+
+        // Merge attempts
+        let existing_ids: Vec<String> = existing_session.attempts.iter().map(|a| a.id.clone()).collect();
+        for attempt in attempts {
+            if !existing_ids.contains(&attempt.id) {
+                existing_session.attempts.push(attempt);
+                changed = true;
+            }
+        }
+
+        if changed {
+            collection.update_one(
+                doc! { "_id": existing_session.id },
+                doc! { "$set": { 
+                    "topic": &existing_session.topic,
+                    "subtopic": &existing_session.subtopic,
+                    "timer_mode": &existing_session.timer_mode,
+                    "time_per_question": &existing_session.time_per_question,
+                    "total_time": &existing_session.total_time,
+                    "attempts": bson::to_bson(&existing_session.attempts).unwrap(),
+                    "updated_at": now 
+                }},
+                None
+            ).await?;
+        }
+        
+        return Ok(Json(SessionResponse::from(existing_session)));
+    }
+
     let session = Session {
         id: None,
         user_id,
