@@ -49,8 +49,8 @@ pub struct AttemptResult {
     pub status: String,
     #[serde(alias = "time_taken", rename = "timeTaken")]
     pub time_taken: i32,
-    #[serde(alias = "total_time", rename = "totalTime")]
-    pub total_time: i32,
+    #[serde(alias = "total_time", rename = "totalTime", skip_serializing_if = "Option::is_none")]
+    pub total_time: Option<i32>,
     #[serde(alias = "user_answer", rename = "userAnswer", skip_serializing_if = "Option::is_none")]
     pub user_answer: Option<serde_json::Value>,
     #[serde(alias = "question_type", rename = "questionType", skip_serializing_if = "Option::is_none")]
