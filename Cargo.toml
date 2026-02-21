@@ -43,3 +43,9 @@ async-trait = "0.1"
 
 # Cookie handling
 axum-extra = { version = "0.9", features = ["cookie"] }
+
+# Rate limiting
+tower_governor = "0.4.2"
+
+# Random generation
+rand = "0.8"

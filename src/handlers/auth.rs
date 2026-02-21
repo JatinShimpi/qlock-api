@@ -175,25 +175,41 @@ pub async fn logout() -> impl IntoResponse {
 #[derive(Debug, Deserialize)]
 pub struct OAuthCallback {
     code: String,
-    #[allow(dead_code)]
     state: Option<String>,
 }
 
 // Google OAuth - redirect to consent
-pub async fn google_auth(State(state): State<AppState>) -> Redirect {
+pub async fn google_auth(State(state): State<AppState>) -> (CookieJar, Redirect) {
+    let oauth_state = uuid::Uuid::new_v4().to_string();
+    let cookie = Cookie::build(("oauth_state", oauth_state.clone()))
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(Duration::minutes(10))
+        .build();
+
     let url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope=email%20profile&access_type=offline",
+         "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope=email%20profile&access_type=offline&state={}",
         state.config.google_client_id,
-        urlencoding::encode(&state.config.google_redirect_url)
+        urlencoding::encode(&state.config.google_redirect_url),
+        urlencoding::encode(&oauth_state)
     );
-    Redirect::to(&url)
+    (CookieJar::new().add(cookie), Redirect::to(&url))
 }
 
 // Google OAuth callback - sets HTTP-only cookie and redirects
 pub async fn google_callback(
     State(state): State<AppState>,
+    jar: CookieJar,
     Query(params): Query<OAuthCallback>,
 ) -> Result<(CookieJar, Redirect), ApiError> {
+    // Validate OAuth state to prevent CSRF
+    let state_cookie = jar.get("oauth_state").map(|c| c.value().to_string());
+    if state_cookie.is_none() || params.state.is_none() || state_cookie != params.state {
+        return Err(ApiError::Unauthorized("Invalid or missing OAuth state parameter".to_string()));
+    }
+
     // Exchange code for token
     let client = reqwest::Client::new();
     let token_res = client
@@ -270,6 +286,7 @@ struct GoogleTokenInfo {
     name: Option<String>,
     picture: Option<String>,
     sub: Option<String>,
+    aud: Option<String>,
 }
 
 // Mobile Google Auth - verify ID token from native apps
@@ -296,6 +313,14 @@ pub async fn google_mobile_auth(
         .json()
         .await
         .map_err(|e| ApiError::InternalError(format!("Token parse failed: {}", e)))?;
+
+    if let Some(aud) = &token_info.aud {
+        if aud != &state.config.google_client_id {
+            return Err(ApiError::Unauthorized("Invalid token audience".to_string()));
+        }
+    } else {
+        return Err(ApiError::Unauthorized("Token misses audience".to_string()));
+    }
 
     let email = token_info
         .email
@@ -326,20 +351,37 @@ pub async fn google_mobile_auth(
 }
 
 // GitHub OAuth - redirect to consent
-pub async fn github_auth(State(state): State<AppState>) -> Redirect {
+pub async fn github_auth(State(state): State<AppState>) -> (CookieJar, Redirect) {
+    let oauth_state = uuid::Uuid::new_v4().to_string();
+    let cookie = Cookie::build(("oauth_state", oauth_state.clone()))
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(Duration::minutes(10))
+        .build();
+
     let url = format!(
-        "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=user:email",
+        "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=user:email&state={}",
         state.config.github_client_id,
-        urlencoding::encode(&state.config.github_redirect_url)
+        urlencoding::encode(&state.config.github_redirect_url),
+        urlencoding::encode(&oauth_state)
     );
-    Redirect::to(&url)
+    (CookieJar::new().add(cookie), Redirect::to(&url))
 }
 
 // GitHub OAuth callback - sets HTTP-only cookie and redirects
 pub async fn github_callback(
     State(state): State<AppState>,
+    jar: CookieJar,
     Query(params): Query<OAuthCallback>,
 ) -> Result<(CookieJar, Redirect), ApiError> {
+    // Validate OAuth state to prevent CSRF
+    let state_cookie = jar.get("oauth_state").map(|c| c.value().to_string());
+    if state_cookie.is_none() || params.state.is_none() || state_cookie != params.state {
+        return Err(ApiError::Unauthorized("Invalid or missing OAuth state parameter".to_string()));
+    }
+
     let client = reqwest::Client::new();
 
     // Exchange code for token
@@ -389,14 +431,18 @@ pub async fn github_callback(
 
     let email = if let Some(res) = email_res {
         let emails: Vec<serde_json::Value> = res.json().await.unwrap_or_default();
-        emails
+        let verified_email = emails
             .iter()
-            .find(|e| e["primary"].as_bool().unwrap_or(false))
-            .and_then(|e| e["email"].as_str())
-            .unwrap_or_else(|| user_data["email"].as_str().unwrap_or_default())
-            .to_string()
+            .find(|e| e["primary"].as_bool().unwrap_or(false) && e["verified"].as_bool().unwrap_or(false))
+            .and_then(|e| e["email"].as_str());
+        
+        if let Some(e) = verified_email {
+            e.to_string()
+        } else {
+            return Err(ApiError::Unauthorized("No verified primary email found on GitHub".to_string()));
+        }
     } else {
-        user_data["email"].as_str().unwrap_or_default().to_string()
+        return Err(ApiError::Unauthorized("Failed to fetch emails from GitHub".to_string()));
     };
 
     let name = user_data["name"]

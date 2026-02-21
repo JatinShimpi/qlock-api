@@ -15,6 +15,8 @@ pub struct Config {
     pub github_client_id: String,
     pub github_client_secret: String,
     pub github_redirect_url: String,
+    pub rate_limit_per_minute: u64,
+    pub rate_limit_burst_size: u32,
 }
 
 impl Config {
@@ -61,6 +63,14 @@ impl Config {
                 .unwrap_or_default(),
             github_redirect_url: env::var("GITHUB_REDIRECT_URL")
                 .unwrap_or_else(|_| "http://localhost:3001/api/auth/github/callback".to_string()),
+            rate_limit_per_minute: env::var("RATE_LIMIT_PER_MINUTE")
+                .unwrap_or_else(|_| "60".to_string())
+                .parse()
+                .unwrap_or(60),
+            rate_limit_burst_size: env::var("RATE_LIMIT_BURST_SIZE")
+                .unwrap_or_else(|_| "10".to_string())
+                .parse()
+                .unwrap_or(10),
         }
     }
 

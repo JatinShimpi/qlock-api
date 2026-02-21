@@ -11,7 +11,9 @@ use axum::{
 };
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use config::Config;
 use handlers::{auth, sessions};
@@ -75,6 +77,18 @@ async fn main() {
         ])
         .allow_credentials(true);
 
+    let governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_millisecond(60_000 / config.rate_limit_per_minute)
+            .burst_size(config.rate_limit_burst_size)
+            .finish()
+            .unwrap(),
+    );
+
+    let governor_layer = GovernorLayer {
+        config: governor_conf.clone(),
+    };
+
     // Build router
     let app = Router::new()
         // Health check for deployment platforms
@@ -99,6 +113,7 @@ async fn main() {
         // Single state for all routes
         .with_state(state)
         // Middleware
+        .layer(governor_layer)
         .layer(cors)
         .layer(TraceLayer::new_for_http());
 
