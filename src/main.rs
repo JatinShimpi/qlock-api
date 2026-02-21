@@ -11,7 +11,7 @@ use axum::{
 };
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
-use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer, key_extractor::SmartIpKeyExtractor};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -81,6 +81,7 @@ async fn main() {
         GovernorConfigBuilder::default()
             .per_millisecond(60_000 / config.rate_limit_per_minute)
             .burst_size(config.rate_limit_burst_size)
+            .key_extractor(SmartIpKeyExtractor)
             .finish()
             .unwrap(),
     );
@@ -89,31 +90,37 @@ async fn main() {
         config: governor_conf.clone(),
     };
 
-    // Build router
+    // Build API router with rate limiting
+    let api_routes = Router::new()
+        // Auth routes
+        .route("/auth/me", get(auth::me))
+        .route("/auth/register", post(auth::register))
+        .route("/auth/login", post(auth::login))
+        .route("/auth/logout", post(auth::logout))
+        .route("/auth/google", get(auth::google_auth))
+        .route("/auth/google/callback", get(auth::google_callback))
+        .route("/auth/google/mobile", post(auth::google_mobile_auth))
+        .route("/auth/github", get(auth::github_auth))
+        .route("/auth/github/callback", get(auth::github_callback))
+        // Session routes
+        .route("/sessions", get(sessions::list_sessions))
+        .route("/sessions", post(sessions::create_session))
+        .route("/sessions/sync", post(sessions::sync_sessions))
+        .route("/sessions/:id", put(sessions::update_session))
+        .route("/sessions/:id", delete(sessions::delete_session))
+        // Middleware
+        .layer(governor_layer);
+
+    // Build main router
     let app = Router::new()
-        // Health check for deployment platforms
+        // Health check for deployment platforms MUST NOT be rate limited
         .route("/", get(|| async { "OK" }))
         .route("/health", get(|| async { "OK" }))
-        // Auth routes
-        .route("/api/auth/me", get(auth::me))
-        .route("/api/auth/register", post(auth::register))
-        .route("/api/auth/login", post(auth::login))
-        .route("/api/auth/logout", post(auth::logout))
-        .route("/api/auth/google", get(auth::google_auth))
-        .route("/api/auth/google/callback", get(auth::google_callback))
-        .route("/api/auth/google/mobile", post(auth::google_mobile_auth))
-        .route("/api/auth/github", get(auth::github_auth))
-        .route("/api/auth/github/callback", get(auth::github_callback))
-        // Session routes
-        .route("/api/sessions", get(sessions::list_sessions))
-        .route("/api/sessions", post(sessions::create_session))
-        .route("/api/sessions/sync", post(sessions::sync_sessions))
-        .route("/api/sessions/:id", put(sessions::update_session))
-        .route("/api/sessions/:id", delete(sessions::delete_session))
+        // Mount API routes
+        .nest("/api", api_routes)
         // Single state for all routes
         .with_state(state)
-        // Middleware
-        .layer(governor_layer)
+        // Global Middleware
         .layer(cors)
         .layer(TraceLayer::new_for_http());
 
@@ -122,5 +129,5 @@ async fn main() {
     tracing::info!("🚀 Qlock API server running on http://localhost:{}", port);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
 }
