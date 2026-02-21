@@ -6,6 +6,7 @@ mod models;
 mod services;
 
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, post, put, delete},
     Router,
 };
@@ -121,6 +122,7 @@ async fn main() {
         // Single state for all routes
         .with_state(state)
         // Global Middleware
+        .layer(DefaultBodyLimit::max(5 * 1024 * 1024)) // 5MB limit globally
         .layer(cors)
         .layer(TraceLayer::new_for_http());
 
