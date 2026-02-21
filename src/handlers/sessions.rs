@@ -48,7 +48,7 @@ pub async fn list_sessions(
 }
 
 // Parse ISO date string to bson::DateTime
-fn parse_date(s: &str) -> bson::DateTime {
+pub fn parse_date(s: &str) -> bson::DateTime {
     chrono::DateTime::parse_from_rfc3339(s)
         .map(|d| bson::DateTime::from_chrono(d.with_timezone(&chrono::Utc)))
         .unwrap_or_else(|_| bson::DateTime::now())

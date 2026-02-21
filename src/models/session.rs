@@ -36,8 +36,29 @@ pub struct Question {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attempt {
     pub id: String,
+    #[serde(with = "bson_datetime_as_string")]
     pub date: bson::DateTime,
     pub results: Vec<AttemptResult>,
+}
+
+mod bson_datetime_as_string {
+    use bson::DateTime;
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(date: &DateTime, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&date.try_to_rfc3339_string().unwrap_or_default())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<DateTime, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(crate::handlers::sessions::parse_date(&s)) // Assumes parse_date works globally or is moved
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
