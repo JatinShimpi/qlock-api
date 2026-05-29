@@ -83,6 +83,49 @@ pub async fn me(
     Ok(Json(UserResponse::from(user)))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdatePreferenceRequest {
+    pub exam_preference: String,
+}
+
+// Update exam preference
+pub async fn update_preference(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    Json(req): Json<UpdatePreferenceRequest>,
+) -> Result<Json<UserResponse>, ApiError> {
+    let token = extract_token(&jar, &headers)
+        .ok_or_else(|| ApiError::Unauthorized("Not authenticated".to_string()))?;
+
+    let claims = state.jwt.verify_token(&token)?;
+    let user_id = ObjectId::parse_str(&claims.sub)
+        .map_err(|_| ApiError::Unauthorized("Invalid user ID".to_string()))?;
+
+    let collection: Collection<User> = state.db.collection("users");
+    
+    // Check if user exists before updating
+    let mut user = collection
+        .find_one(doc! { "_id": &user_id }, None)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("User not found".to_string()))?;
+
+    // Update passing just the string
+    collection
+        .update_one(
+            doc! { "_id": &user_id },
+            doc! { "$set": { "exam_preference": &req.exam_preference, "updated_at": bson::DateTime::now() } },
+            None,
+        )
+        .await?;
+
+    // Update local object to return
+    user.exam_preference = Some(req.exam_preference);
+
+    Ok(Json(UserResponse::from(user)))
+}
+
+
 // Email registration
 pub async fn register(
     State(state): State<AppState>,
@@ -110,6 +153,7 @@ pub async fn register(
         avatar_url: None,
         provider: AuthProvider::Email,
         provider_id: None,
+        exam_preference: None,
         password_hash: Some(password_hash),
         created_at: now,
         updated_at: now,
@@ -197,7 +241,6 @@ pub async fn google_auth(State(state): State<AppState>) -> (CookieJar, Redirect)
     );
     (CookieJar::new().add(cookie), Redirect::to(&url))
 }
-
 // Google OAuth callback - sets HTTP-only cookie and redirects
 pub async fn google_callback(
     State(state): State<AppState>,
@@ -230,9 +273,13 @@ pub async fn google_callback(
         .await
         .map_err(|e| ApiError::InternalError(format!("Token parse failed: {}", e)))?;
 
-    let access_token = token_data["access_token"]
-        .as_str()
-        .ok_or_else(|| ApiError::InternalError("No access token".to_string()))?;
+    let access_token = match token_data["access_token"].as_str() {
+        Some(token) => token,
+        None => {
+            tracing::error!("Failed to get access token. Google response: {:?}", token_data);
+            return Err(ApiError::InternalError("No access token returned from Google".to_string()));
+        }
+    };
 
     // Get user info
     let user_res = client
@@ -508,6 +555,7 @@ async fn upsert_oauth_user(
         avatar_url,
         provider,
         provider_id: Some(provider_id),
+        exam_preference: None,
         password_hash: None,
         created_at: now,
         updated_at: now,

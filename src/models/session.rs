@@ -27,10 +27,14 @@ pub struct Question {
     pub id: String,
     pub identifier: String,
     pub time: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub question_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

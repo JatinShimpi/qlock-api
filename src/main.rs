@@ -95,6 +95,7 @@ async fn main() {
     let api_routes = Router::new()
         // Auth routes
         .route("/auth/me", get(auth::me))
+        .route("/auth/me/preference", put(auth::update_preference))
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
         .route("/auth/logout", post(auth::logout))

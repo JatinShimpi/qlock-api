@@ -13,6 +13,8 @@ pub struct User {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub exam_preference: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub password_hash: Option<String>,
     pub created_at: bson::DateTime,
     pub updated_at: bson::DateTime,
@@ -43,6 +45,7 @@ pub struct UserResponse {
     pub name: String,
     pub avatar_url: Option<String>,
     pub provider: String,
+    pub exam_preference: Option<String>,
 }
 
 impl From<User> for UserResponse {
@@ -53,6 +56,7 @@ impl From<User> for UserResponse {
             name: user.name,
             avatar_url: user.avatar_url,
             provider: user.provider.to_string(),
+            exam_preference: user.exam_preference,
         }
     }
 }
